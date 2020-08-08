@@ -1,0 +1,165 @@
+---
+title: "Case Study 13: Semester Project"
+author: "Tyler Craig"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  html_document:  
+    keep_md: true
+    toc: true
+    toc_float: false
+    code_folding: hide
+    fig_height: 6
+    fig_width: 12
+    fig_align: 'center'
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r}
+# load libraries
+library(tidyverse)
+library(downloader)
+library(sf)
+library(leaflet)
+```
+
+### Background
+Covid-19 has already affected millions of Americans across the nation which is putting a huge strain on our country’s healthcare system. In this project I attempt to make a visualization of this strain. As we know each hospital has only so many intensive care unit beds equipped with ventilators that can provide life-saving care for lungs ravished by the viral infection. The data I am using comes from a team of researchers at the Harvard Global Data Institute. They modeled various scenarios, in which 20%, 40% and 60% of the adult population would be infected with the novel coronavirus, many of whom would have no or few symptoms. Today I’m looking at this scenario as if 40% of the adult population will be affected by the Coronavirus which is a pretty conservative estimate. There have been estimates made by epidemiologists that go up to 76% of the population. Most of these cases will be asymptomatic and therefore will not be reported. Hospital bed figures were derived from recent surveys conducted by the American Hospital Association and data compiled by the American Hospital Directory. The data is divided into slightly more than 300 regions, also known as hospital referral regions. People that live within these regions tend to go to the same hospitals. The number of ICU beds in each of these regions is calculated by summing up the number of these beds for each of the hospitals in that area.
+
+
+```{r}
+
+setwd("/Users/tylercraig/Documents/School/Data Wrangling/M335_SP20_Craig_Tyle/Case_Study_13_exit/analysis")
+
+# read in the hospital data
+fourty_percent_inf <- read_csv("../../data/semester_project_data/HRR_40.csv")
+
+# read in the HRR geography
+HRR_geo <- read_sf("../../data/semester_project_data/Hospital Referral Region/geo_export_9c15252c-8769-4934-89e3-1b4c4815c4e0.shp")
+
+```
+
+### Questions
+The questions I’m proposing is what areas need the most beds and how many beds do they need in their region? I’ll attempt to answer these questions by visualizing the data I talked about in the background in a convenient and interactive map.
+
+
+```{r}
+# define a funciton that will select the colums we want and tidy the data
+
+hospital_data_cleaner <- function(dataset) {
+  
+  tidy_dataset <- dataset %>%
+    drop_na() %>%
+    select("HRR", "Total ICU Beds", "Potentially Available ICU Beds*", "Projected Individuals Needing ICU Care", "ICU Beds Needed, Eighteen Months") %>%
+    mutate("Percentage of Potentially Available ICU Beds Needed, Eighteen Months" = round((`ICU Beds Needed, Eighteen Months` / `Potentially Available ICU Beds*`) * 100, 2)) %>%
+    separate(HRR, into = c("HRR", "state_abbreviation"), sep = ", ") %>%
+     filter(state_abbreviation %in% state.abb & state_abbreviation != "AK" & state_abbreviation != "HI") %>%
+    mutate(more_beds_needed = `ICU Beds Needed, Eighteen Months` - `Potentially Available ICU Beds*`) %>%
+    mutate(more_beds_needed = case_when(more_beds_needed < 0 ~ 0, 
+                       TRUE ~ as.numeric(more_beds_needed))) %>%
+    mutate(HRR = case_when(HRR == "Palm Springs/Rancho Mira" ~ "Palm Springs/Rancho Mirage", TRUE ~ as.character(HRR)))
+  
+}
+
+```
+
+```{r, results='hide'}
+# tidy the data
+
+# split the HRR from the state in HRR_geo
+HRR_geo_clean <- HRR_geo %>% 
+  separate(hrr_name, into = c("state_abbreviation", "HRR"), sep = " - ")
+
+HRR_geo_48 <- HRR_geo_clean %>% 
+  filter(state_abbreviation %in% state.abb & state_abbreviation != "AK" & state_abbreviation != "HI") %>%
+  select(HRR, state_abbreviation, geometry)
+
+# tidy the hospital data
+HRR_40 <- hospital_data_cleaner(fourty_percent_inf)
+
+# combine the hospital data and the geometry data
+combined_data_40 <- left_join(HRR_geo_48, HRR_40, by = c("HRR", "state_abbreviation"))
+
+```
+
+
+### Plot and Information
+Here we can see each hospital referral region. There are two options and it’s good to just look at one option at a time. You can zoom in and hover over an area. That area will automatically be highlighted, and more specific information will be shown based off of the option you select.
+
+#### Option 1 (percent used)
+- The first option is the percent used option and that tells us the percentage of the ICU beds that are expected to be used over an 18-month time frame if 40% of the population gets the virus in each of these regions. The red toned areas mean that more beds will be used that region than are available. 
+
+#### Option 2 (beds needed)
+- The second option is the beds needed option. This option tells us how many more beds will be needed so that everyone expected to need an ICU bed will have one. The deeper the purple color the more ICU beds hospitals in that region need.
+
+
+```{r, fig.width=8}
+
+# plot the interactive leaflet map
+p1 <- leaflet(data = st_transform(combined_data_40, crs = "+proj=longlat +datum=WGS84"),
+              options = leafletOptions(minZoom = 3, maxZoom = 12)) %>%
+  addTiles() %>%
+  setView(zoom = 4, lat = 36, lng = -96)
+
+pal <- colorNumeric(palette = c("white","red"),
+                    domain = combined_data_40$`Percentage of Potentially Available ICU Beds Needed, Eighteen Months`)
+
+more_beds_pal <- colorNumeric(palette = c("white", "purple"),
+                    domain = combined_data_40$more_beds_needed)
+
+p2 <- p1 %>% addPolygons(color = "black",
+                         weight = 0.5,
+                         fillOpacity = 0.5,
+                         group = "percent used",
+                         highlightOptions = highlightOptions(color = "blue", 
+                                                             weight = 1, 
+                                                             bringToFront = TRUE,
+                                                             fillColor = "white"),
+                         label = paste(combined_data_40$HRR, 
+                                       "area will use",
+                                       combined_data_40$`Percentage of Potentially Available ICU Beds Needed, Eighteen Months`,
+                                       "% of potentially available ICU beds"),
+                         fillColor = pal(combined_data_40$`Percentage of Potentially Available ICU Beds Needed, Eighteen Months`)) %>%
+  addPolygons(color = "black",
+                         weight = 0.5,
+                         fillOpacity = 0.5,
+                         group = "beds needed",
+                         highlightOptions = highlightOptions(color = "blue", 
+                                                             weight = 1, 
+                                                             bringToFront = TRUE,
+                                                             fillColor = "white"),
+                         label = paste(combined_data_40$HRR, 
+                                       "area needs",
+                                       format(combined_data_40$more_beds_needed, 
+                                              big.mark = ","),
+                                       "more ICU beds"),
+                         fillColor = more_beds_pal(combined_data_40$more_beds_needed)) %>%
+  addLegend("bottomright",
+            group = "beds needed",
+            pal = more_beds_pal, 
+            values = combined_data_40$more_beds_needed, 
+            opacity = 1,
+            labFormat = labelFormat(),
+            title = "Beds Needed") %>%
+   addLegend("bottomright",
+            group = "percent used",
+            pal = pal, 
+            values = combined_data_40$`Percentage of Potentially Available ICU Beds Needed, Eighteen Months`, 
+            opacity = 1,
+            labFormat = labelFormat(suffix = "%"),
+            title = "Percent of Beds Used") %>%
+  addLayersControl(overlayGroups = c("percent used", "beds needed"),
+                   options = layersControlOptions(collapsed = FALSE)) %>%
+  hideGroup("beds needed")
+
+p2
+  
+```
+
+### Conclusions
+
+At a first glance it seems like we are in a pretty bad situation. Most of the areas are pink or red, or if you looked at the second option a shade of purple, meaning that there won’t be enough beds for everyone who needs one. There is some good news though. Most hospitals have already seen that they would be underprepared so they have designated extra areas in their buildings with more beds and ventilators so that they could accommodate a large influx of people should that be the case. At the time of this report there is also a vaccine being developed in the United States that is entering stage 3 of its clinical trials so there is hope that we will have one within a year. This model runs over 18 months so a nationally distributed vaccine would cut the amount of cases down drastically to say the least. This would also mean our medical workers can breathe a little bit easier underneath their masks and visors. Still, it is good to be prepared for the worst even though we hope for the best and that is what these data, models and visualizations made by researchers, epidemiologists, statisticians and data scientists are for.  
+
+
